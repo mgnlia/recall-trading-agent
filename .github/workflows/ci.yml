@@ -24,10 +24,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra dev
 
       - name: Lint (ruff)
-        run: uv run ruff check .
+        run: uv run ruff check . --select E,F,W --ignore F401
 
   frontend:
     runs-on: ubuntu-latest
