@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "sse-starlette>=2.1.0",
     "numpy>=1.26.0",
+    "structlog>=24.0.0",
 ]
 
 [project.optional-dependencies]
@@ -25,8 +26,8 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
+select = ["E", "F", "W"]
+ignore = ["E501", "F401"]
 
 [tool.pyright]
 pythonVersion = "3.11"
