@@ -28,10 +28,6 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
-      - name: Typecheck (pyright)
-        run: pyright --warnings
-        continue-on-error: true
-
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -45,7 +41,11 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci || npm install
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+        continue-on-error: true
 
       - name: Build
         run: npm run build

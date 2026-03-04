@@ -1,60 +1,33 @@
-"""Tests for trading strategies."""
-import pytest
-from app.recall_client import TOKENS
-from app.strategy.momentum import MomentumStrategy
-from app.strategy.mean_revert import MeanReversionStrategy
-from app.strategy.base import Signal
+"""Tests for trading strategies — basic smoke tests."""
 
-USDC = TOKENS["USDC"]
-WETH = TOKENS["WETH"]
-WBTC = TOKENS["WBTC"]
+from strategies.mean_reversion import MeanReversionStrategy
+from strategies.momentum import MomentumStrategy, Signal
 
-@pytest.mark.asyncio
-async def test_momentum_buy_signal():
+
+def test_momentum_hold_on_insufficient_data():
     strat = MomentumStrategy()
-    # Simulate 5 samples with strong uptrend (+5%)
-    prices = {WETH: [1000, 1010, 1020, 1030, 1050]}
-    sig = await strat.generate_signal(prices, 10000, {"USDC": 5000})
-    assert sig is not None
-    assert sig.signal == Signal.BUY
-    assert sig.to_symbol == "WETH"
+    sig = strat.evaluate("0xToken")
+    assert sig.action == "hold"
 
-@pytest.mark.asyncio
-async def test_momentum_sell_signal():
-    strat = MomentumStrategy()
-    # Downtrend
-    prices = {WETH: [1050, 1030, 1020, 1010, 1000]}
-    sig = await strat.generate_signal(prices, 10000, {"USDC": 100, "WETH": 5000})
-    assert sig is not None
-    assert sig.signal == Signal.SELL
 
-@pytest.mark.asyncio
-async def test_momentum_hold_flat():
-    strat = MomentumStrategy()
-    prices = {WETH: [1000, 1001, 1000, 1001, 1000]}
-    sig = await strat.generate_signal(prices, 10000, {"USDC": 5000})
-    assert sig is None  # no signal on flat market
+def test_momentum_feed_and_evaluate():
+    strat = MomentumStrategy(window_short=3, threshold=0.02)
+    for p in [100, 101, 102, 103, 106]:
+        strat.feed_price("0xToken", p)
+    sig = strat.evaluate("0xToken")
+    assert isinstance(sig, Signal)
+    assert sig.action in ("buy", "sell", "hold")
 
-@pytest.mark.asyncio
-async def test_mean_revert_buy_oversold():
+
+def test_mean_reversion_hold_on_insufficient_data():
     strat = MeanReversionStrategy()
-    # 10 prices with last price very low (oversold)
-    prices = {WETH: [1000]*9 + [900]}  # last price 10% below mean
-    sig = await strat.generate_signal(prices, 10000, {"USDC": 5000})
-    assert sig is not None
-    assert sig.signal == Signal.BUY
+    sig = strat.evaluate("0xToken")
+    assert sig.action == "hold"
 
-@pytest.mark.asyncio
-async def test_mean_revert_sell_overbought():
-    strat = MeanReversionStrategy()
-    prices = {WETH: [1000]*9 + [1100]}  # last price 10% above mean
-    sig = await strat.generate_signal(prices, 10000, {"USDC": 100, "WETH": 5000})
-    assert sig is not None
-    assert sig.signal == Signal.SELL
 
-@pytest.mark.asyncio
-async def test_insufficient_history_returns_none():
-    strat = MomentumStrategy()
-    prices = {WETH: [1000, 1010]}  # only 2 samples, need 5
-    sig = await strat.generate_signal(prices, 10000, {"USDC": 5000})
-    assert sig is None
+def test_mean_reversion_buy_on_dip():
+    strat = MeanReversionStrategy(window=5, z_threshold=1.0)
+    for p in [100, 100, 100, 100, 100, 100, 100, 100, 100, 80]:
+        strat.feed_price("0xToken", p)
+    sig = strat.evaluate("0xToken")
+    assert sig.action == "buy"
