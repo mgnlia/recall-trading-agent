@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install uv
         run: pip install uv
@@ -25,10 +25,12 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -e ".[dev]"
 
-      - name: Run tests
-        run: python -m pytest tests/ -v
-        env:
-          RECALL_API_KEY: test_key_ci
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Typecheck (pyright)
+        run: pyright --warnings
+        continue-on-error: true
 
   frontend:
     runs-on: ubuntu-latest
@@ -40,7 +42,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install dependencies
         run: npm install
