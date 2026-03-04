@@ -5,13 +5,15 @@ WORKDIR /app
 # Install uv
 RUN pip install uv
 
-# Copy project files
-COPY pyproject.toml .
-COPY app/ app/
+# Copy dependency files
+COPY pyproject.toml ./
 
 # Install dependencies
-RUN uv pip install --system -e .
+RUN uv pip install --system -e "."
+
+# Copy source
+COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py"]
