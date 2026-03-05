@@ -1,6 +1,12 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools]
+py-modules = ["config", "agent", "risk", "main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
 
 [project]
 name = "recall-trading-agent"
@@ -18,12 +24,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["ruff>=0.6"]
 
-[tool.uv]
-dev-dependencies = ["ruff>=0.6"]
+[dependency-groups]
+dev = ["ruff>=0.6"]
 
 [tool.ruff]
 target-version = "py311"
-line-length = 120
-
-[tool.ruff.lint]
-ignore = ["E501", "E402", "E712", "F401"]
+line-length = 100
