@@ -2,13 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install uv
+# Install uv package manager
 RUN pip install --no-cache-dir uv
 
-# Copy ALL source (must come before install so uv can resolve the local package)
+# Copy ALL source FIRST — required before any install step
 COPY . .
 
-# Install dependencies from pyproject.toml (non-editable, no source binding needed)
+# Non-editable install from pyproject.toml (source already present above)
 RUN uv pip install --system --no-cache .
 
 EXPOSE 8000
