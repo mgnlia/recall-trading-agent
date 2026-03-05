@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 from app.agent import agent
 from app.config import settings
-from app.recall_client import RecallClient
 
 logger = structlog.get_logger(__name__)
 
@@ -42,14 +41,18 @@ app.add_middleware(
 )
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+# ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "sandbox": settings.use_sandbox, "agent": settings.agent_name}
+    return {
+        "status": "ok",
+        "sandbox": settings.use_sandbox,
+        "agent": settings.agent_name,
+    }
 
 
-# ── Portfolio ─────────────────────────────────────────────────────────────────
+# ── Portfolio ────────────────────────────────────────────────────────────────
 
 @app.get("/api/portfolio")
 async def get_portfolio():
@@ -61,14 +64,19 @@ async def get_portfolio():
         "agent_id": portfolio.agent_id,
         "total_value": portfolio.total_value,
         "tokens": [
-            {"symbol": t.symbol, "amount": t.amount, "price": t.price, "value": t.value}
+            {
+                "symbol": t.symbol,
+                "amount": t.amount,
+                "price": t.price,
+                "value": t.value,
+            }
             for t in portfolio.tokens
         ],
         "snapshot_time": portfolio.snapshot_time,
     }
 
 
-# ── Leaderboard ───────────────────────────────────────────────────────────────
+# ── Leaderboard ──────────────────────────────────────────────────────────────
 
 @app.get("/api/leaderboard")
 async def get_leaderboard():
@@ -77,7 +85,7 @@ async def get_leaderboard():
     return await agent.client.get_leaderboard()
 
 
-# ── Agent status ──────────────────────────────────────────────────────────────
+# ── Agent status ─────────────────────────────────────────────────────────────
 
 @app.get("/api/status")
 async def get_status():
@@ -86,7 +94,10 @@ async def get_status():
 
 @app.get("/api/trades")
 async def get_trades(limit: int = Query(50, le=200)):
-    return {"trades": agent.trade_history[-limit:], "total": len(agent.trade_history)}
+    return {
+        "trades": agent.trade_history[-limit:],
+        "total": len(agent.trade_history),
+    }
 
 
 @app.get("/api/risk")
@@ -94,7 +105,7 @@ async def get_risk():
     return agent.risk.to_dict()
 
 
-# ── Manual controls ───────────────────────────────────────────────────────────
+# ── Manual controls ──────────────────────────────────────────────────────────
 
 @app.post("/api/agent/start")
 async def start_agent():
@@ -133,10 +144,14 @@ async def manual_trade(req: ManualTradeRequest):
         amount=req.amount,
         reason=req.reason,
     )
-    return {"success": result.success, "tx_id": result.transaction_id, "error": result.error}
+    return {
+        "success": result.success,
+        "tx_id": result.transaction_id,
+        "error": result.error,
+    }
 
 
-# ── SSE Stream ────────────────────────────────────────────────────────────────
+# ── SSE Stream ───────────────────────────────────────────────────────────────
 
 @app.get("/api/stream")
 async def sse_stream():
