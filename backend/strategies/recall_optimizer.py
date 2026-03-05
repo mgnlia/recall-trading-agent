@@ -28,10 +28,11 @@ class AirdropMetrics:
     chains_used: set[str] = field(default_factory=set)
     last_trade_ts: float = 0.0
     daily_returns: list[float] = field(default_factory=list)
+    # Track the last date we reset trades_today so it resets at midnight
     _last_reset_date: date = field(default_factory=date.today)
 
     def maybe_reset_daily(self) -> None:
-        """Reset daily counters if the calendar day has rolled over."""
+        """Reset trades_today if the calendar day has rolled over."""
         today = date.today()
         if today != self._last_reset_date:
             logger.info(
@@ -69,6 +70,7 @@ class RecallOptimizer:
         self._diversification_targets = tokens
 
     def record_trade(self, token: str, chain: str = "evm") -> None:
+        # Always check for day rollover before incrementing
         self.metrics.maybe_reset_daily()
         self.metrics.total_trades += 1
         self.metrics.trades_today += 1
@@ -78,7 +80,7 @@ class RecallOptimizer:
 
     def evaluate(self, portfolio_tokens: list[str]) -> Signal:
         """Suggest a trade to boost airdrop score if activity is low."""
-        # Always check for daily rollover before evaluating
+        # Always check for day rollover before reading trades_today
         self.metrics.maybe_reset_daily()
 
         now = time.time()
