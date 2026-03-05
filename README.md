@@ -5,40 +5,39 @@ Multi-strategy AI trading agent for [Recall Network](https://recall.network) com
 ## Architecture
 
 ```
-scanner → strategy → risk_manager → API client → trade
+price feed → strategies → weighted combiner → risk manager → trade executor
 ```
 
 ```
-backend/app/
-  recall_client.py     — Recall Competition API client (paper + spot)
-  agent.py             — Main async agent loop
+backend/
+  main.py              — FastAPI: REST endpoints + SSE stream
+  agent.py             — Main async agent loop + weighted signal combiner
   risk.py              — Position sizing, drawdown halt, exposure limits
   config.py            — Pydantic settings from env vars
-  main.py              — FastAPI: REST endpoints + SSE stream
-  strategy/
-    momentum.py        — Trend-following on price momentum
-    mean_revert.py     — Z-score mean reversion
-    sentiment.py       — News/social signal scanner
-frontend/              — Next.js live dashboard (P&L, signals, trades, leaderboard)
+  strategies/
+    momentum.py        — Trend-following on short vs long price momentum
+    mean_reversion.py  — Z-score mean reversion (window=20, z_threshold=1.5)
+    sentiment.py       — Synthetic sentiment: momentum divergence + volatility regime + headline keywords
+    recall_optimizer.py — Airdrop score optimizer (diversity + activity signals)
+frontend/              — Next.js 14 live dashboard (P&L, signals, trades, leaderboard)
 ```
 
 ## Strategies
 
-| Strategy | Signal | Logic |
+| Strategy | Weight | Signal Logic |
 |---|---|---|
-| **Momentum** | BUY/SELL | Price up >1.5% over window → BUY; down >1.5% → SELL |
-| **Mean Reversion** | BUY/SELL | Z-score > 1.5 → oversold BUY; < -1.5 → overbought SELL |
-| **Sentiment** | BUY/SELL | Keyword scan of crypto news headlines |
+| **Momentum** | 50% | Short-window return > 2% threshold → BUY/SELL |
+| **Mean Reversion** | 30% | Z-score > 1.5 std dev from 20-period mean → BUY/SELL |
+| **Sentiment** | 20% | Momentum divergence (40%) + volatility regime (30%) + headline keywords (30%) |
 
-Signals are **weighted and combined** (momentum 50%, mean-revert 30%, sentiment 20%) before execution.
+Signals are **weighted and combined** per token before execution. The combined confidence score must exceed a minimum threshold (0.05) to trigger a trade.
 
 ## Risk Management
 
 - Max 25% portfolio in any single token
-- Max 10% portfolio per trade
-- Kelly-inspired signal-strength sizing
-- Auto-halt if drawdown exceeds 10% from peak
-- Day-rollover resets daily drawdown
+- Kelly-inspired sizing: trade size = max_position × confidence
+- Auto-halt if drawdown exceeds 15% from peak
+- `POST /api/agent/resume` to clear halt and restart
 
 ## Quick Start
 
@@ -56,7 +55,7 @@ cp .env.example .env
 # Edit .env: set RECALL_API_KEY
 
 uv sync
-uv run uvicorn app.main:app --reload --port 8000
+uv run python main.py
 ```
 
 ### 3. Frontend
@@ -76,15 +75,12 @@ Open [http://localhost:3000](http://localhost:3000)
 
 | Variable | Default | Description |
 |---|---|---|
-| `RECALL_API_KEY` | *(required)* | Your Recall agent API key |
-| `USE_SANDBOX` | `true` | Use sandbox for testing |
-| `TRADE_INTERVAL_SECS` | `60` | Seconds between agent cycles |
+| `RECALL_API_KEY` | `demo_key` | Your Recall agent API key |
+| `RECALL_BASE_URL` | sandbox URL | Recall API base URL |
+| `SIMULATION_MODE` | `true` | Use simulated prices/trades |
+| `TRADE_INTERVAL_SECONDS` | `60` | Seconds between agent cycles |
 | `MAX_POSITION_PCT` | `0.25` | Max % of portfolio per token |
-| `MAX_TRADE_PCT` | `0.10` | Max % of portfolio per trade |
-| `MAX_DAILY_DRAWDOWN_PCT` | `0.10` | Halt threshold |
-| `MOMENTUM_WEIGHT` | `0.5` | Strategy weight |
-| `MEAN_REVERT_WEIGHT` | `0.3` | Strategy weight |
-| `SENTIMENT_WEIGHT` | `0.2` | Strategy weight |
+| `MAX_DRAWDOWN_PCT` | `0.15` | Halt threshold |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -97,50 +93,36 @@ Open [http://localhost:3000](http://localhost:3000)
 | Endpoint | Description |
 |---|---|
 | `GET /health` | Health check |
-| `GET /api/status` | Full agent state |
-| `GET /api/portfolio` | Live portfolio from Recall |
-| `GET /api/trades` | Trade history |
-| `GET /api/risk` | Risk manager state |
+| `GET /api/status` | Full agent state (status, PnL, airdrop score) |
+| `GET /api/portfolio` | Live portfolio snapshot |
+| `GET /api/trades` | Trade event history |
+| `GET /api/risk` | Risk manager state (drawdown, halt) |
+| `GET /api/airdrop` | RECALL airdrop farming progress |
 | `GET /api/leaderboard` | Competition leaderboard |
-| `GET /api/stream` | SSE real-time stream |
+| `GET /api/stream` | SSE real-time event stream |
 | `POST /api/agent/start` | Start agent loop |
 | `POST /api/agent/stop` | Stop agent loop |
-| `POST /api/agent/resume` | Resume after halt |
-| `POST /api/trade/manual` | Execute manual trade |
+| `POST /api/agent/resume` | Resume after risk halt |
 
 ## Deployment
 
 ### Backend (Railway)
 
-```bash
-cd backend
-railway up
-```
+Connect the `backend/` directory as a Railway service — `railway.toml` is pre-configured with Dockerfile builder and `/health` check.
 
-Set env vars in Railway dashboard.
+### Frontend (Railway / Vercel)
 
-### Frontend (Vercel/Netlify)
+Connect the `frontend/` directory — `railway.toml` uses Nixpacks + `npm run build`. Set `NEXT_PUBLIC_API_URL` to your backend URL.
 
-```bash
-cd frontend
-vercel --prod
-# Set NEXT_PUBLIC_API_URL to your Railway backend URL
-```
+## Airdrop Farming
 
-## Competition Strategy
-
-1. **Sandbox first** — verify API key works, watch signals for 1–2 cycles
-2. **Switch to production** — set `USE_SANDBOX=false` before competition starts
-3. **Monitor dashboard** — watch drawdown, halt reason, leaderboard rank
-4. **Boost farming** — stake RECALL to boost your own agent for compounding rewards
-
-## Tokens Tracked
-
-WETH, WBTC, LINK, UNI, AAVE (all EVM/Ethereum mainnet fork addresses)
+The `RecallOptimizer` tracks daily trading activity and generates diversification signals when the agent is idle:
+- Encourages at least 3 trades/day for activity score
+- Targets tokens not yet traded for diversity score
+- Daily counter resets at midnight automatically
 
 ## Links
 
 - [Recall Docs](https://docs.recall.network)
-- [Python Quickstart](https://docs.recall.network/competitions/build-agent/your-first-trade)
-- [Paper Trading API](https://docs.recall.network/competitions/build-agent/trading)
 - [Competition App](https://competitions.recall.network)
+- [Trading API](https://docs.recall.network/competitions/build-agent/trading)
