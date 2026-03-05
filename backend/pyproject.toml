@@ -1,6 +1,18 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[tool.setuptools]
+# Flat layout: all .py files in backend/ are top-level modules
+py-modules = [
+    "config",
+    "agent",
+    "risk",
+    "main",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
 
 [project]
 name = "recall-trading-agent"
@@ -20,6 +32,7 @@ dev = ["ruff>=0.6"]
 
 [tool.ruff]
 target-version = "py311"
+line-length = 100
 
 [tool.uv]
 dev-dependencies = ["ruff>=0.6"]
