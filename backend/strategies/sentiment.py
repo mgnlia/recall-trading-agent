@@ -1,13 +1,11 @@
 """Sentiment-based trading strategy.
 
-Scans a rotating set of crypto market sentiment signals (fear/greed proxies,
-price-vs-MA divergence, volatility regime) to produce BUY/SELL/HOLD signals.
+Produces BUY/SELL/HOLD signals from three price-derived sub-signals:
+  1. Short-term vs long-term momentum divergence  (40% weight)
+  2. Volatility regime                            (30% weight)
+  3. Synthetic headline keyword scoring           (30% weight)
 
-This is a self-contained implementation — no external news API required.
-It derives a synthetic sentiment score from:
-  1. Short-term vs long-term momentum divergence (trend exhaustion)
-  2. Volatility regime (high vol → contrarian; low vol → trend-following)
-  3. A lightweight keyword-weighted headline simulator seeded from price action
+No external API is required — all signals are derived from price history.
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ _BULLISH_HEADLINES = [
     "Bitcoin surges past key resistance as institutional demand rises",
     "Crypto market cap hits new high amid ETF inflows",
     "DeFi TVL surges as altcoin season begins",
-    "ETH upgrade boosts confidence; analysts target $5k",
+    "ETH upgrade boosts confidence; analysts target new highs",
 ]
 _BEARISH_HEADLINES = [
     "Crypto selloff deepens on macro uncertainty",
@@ -57,18 +55,18 @@ def _score_headline(headline: str) -> float:
 
 @dataclass
 class SentimentStrategy:
-    """Synthetic sentiment strategy combining price-derived signals and simulated headlines.
+    """Synthetic sentiment strategy — no external API required.
 
-    Weights:
-      - momentum_divergence: 40%  (short vs long momentum disagreement → reversal)
-      - volatility_regime:   30%  (low vol = trend; high vol = contrarian)
-      - headline_sentiment:  30%  (keyword-weighted synthetic headlines)
+    Internal weights:
+      momentum_divergence : 40%
+      volatility_regime   : 30%
+      headline_sentiment  : 30%
     """
 
     window_short: int = 5
     window_long: int = 20
     vol_window: int = 14
-    threshold: float = 0.55          # min composite score to generate signal
+    threshold: float = 0.55
     _prices: dict[str, list[float]] = field(default_factory=dict)
     _rng: random.Random = field(default_factory=lambda: random.Random(42))
 
@@ -78,7 +76,6 @@ class SentimentStrategy:
         max_len = self.window_long * 3
         if len(self._prices[token]) > max_len:
             self._prices[token] = self._prices[token][-max_len:]
-        # Re-seed RNG with latest price for deterministic-but-varying headlines
         self._rng = random.Random(int(price * 1000) % (2**32))
 
     def evaluate(self, token: str) -> Signal:
@@ -86,17 +83,15 @@ class SentimentStrategy:
         if len(prices) < self.window_long + 1:
             return Signal("hold", token, 0.0, "Insufficient data for sentiment analysis")
 
-        # --- 1. Momentum divergence score ---
+        # --- 1. Momentum divergence (40%) ---
         short_slice = prices[-self.window_short:]
         long_slice = prices[-self.window_long:]
         short_ret = (short_slice[-1] - short_slice[0]) / short_slice[0]
         long_ret = (long_slice[-1] - long_slice[0]) / long_slice[0]
-        # Divergence: short and long pointing in opposite directions → potential reversal
         divergence = short_ret - long_ret
-        # Normalise to [-1, +1]
         div_score = max(-1.0, min(1.0, divergence / 0.05))
 
-        # --- 2. Volatility regime score ---
+        # --- 2. Volatility regime (30%) ---
         returns = [
             (prices[i] - prices[i - 1]) / prices[i - 1]
             for i in range(max(1, len(prices) - self.vol_window), len(prices))
@@ -106,17 +101,13 @@ class SentimentStrategy:
             vol = math.sqrt(sum((r - mean_r) ** 2 for r in returns) / len(returns))
         else:
             vol = 0.0
-        # High vol (>2%) → contrarian signal; low vol → trend-following
         vol_threshold = 0.02
         if vol > vol_threshold:
-            # Contrarian: fade the short-term move
             vol_score = -math.copysign(min(vol / vol_threshold, 1.0), short_ret)
         else:
-            # Trend-following: follow short-term momentum
             vol_score = math.copysign(min(abs(short_ret) / 0.01, 1.0), short_ret)
 
-        # --- 3. Headline sentiment score ---
-        # Pick a headline pool biased by current short-term return
+        # --- 3. Headline keyword scoring (30%) ---
         if short_ret > 0.01:
             pool = _BULLISH_HEADLINES + _NEUTRAL_HEADLINES
         elif short_ret < -0.01:
@@ -124,7 +115,7 @@ class SentimentStrategy:
         else:
             pool = _NEUTRAL_HEADLINES + _BULLISH_HEADLINES + _BEARISH_HEADLINES
         headline = self._rng.choice(pool)
-        headline_score = _score_headline(headline)  # in [-1, +1]
+        headline_score = _score_headline(headline)
 
         # --- Weighted composite ---
         composite = (
@@ -141,16 +132,12 @@ class SentimentStrategy:
 
         if composite > self.threshold:
             return Signal(
-                "buy",
-                token,
-                confidence,
+                "buy", token, confidence,
                 f"Sentiment BUY: score={composite:.3f} headline='{headline[:50]}...'",
             )
         elif composite < -self.threshold:
             return Signal(
-                "sell",
-                token,
-                confidence,
+                "sell", token, confidence,
                 f"Sentiment SELL: score={composite:.3f} headline='{headline[:50]}...'",
             )
         return Signal("hold", token, 0.0, f"Sentiment neutral: score={composite:.3f}")
