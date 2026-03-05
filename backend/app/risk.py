@@ -10,7 +10,6 @@ Enforces:
 import structlog
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Optional
 
 from app.config import settings
 
@@ -69,18 +68,21 @@ class RiskManager:
 
         # Check drawdown from peak
         if self.state.peak_value > 0:
-            drawdown = (self.state.peak_value - total_value) / self.state.peak_value
+            drawdown = (
+                (self.state.peak_value - total_value) / self.state.peak_value
+            )
             if drawdown >= settings.max_daily_drawdown_pct:
                 self.halt(
                     f"Max drawdown exceeded: {drawdown:.1%} from peak "
-                    f"(peak={self.state.peak_value:.2f}, current={total_value:.2f})"
+                    f"(peak={self.state.peak_value:.2f}, "
+                    f"current={total_value:.2f})"
                 )
 
     def size_trade(
         self,
         portfolio_value: float,
         from_token_value: float,
-        signal_strength: float,  # 0.0 to 1.0
+        signal_strength: float,
     ) -> float:
         """
         Calculate trade size in USD.
@@ -91,12 +93,12 @@ class RiskManager:
         if self.state.halted:
             return 0.0
 
-        # Base size = max_trade_pct of portfolio, scaled by signal strength
+        # Base size = max_trade_pct of portfolio, scaled by signal
         max_trade_usd = portfolio_value * settings.max_trade_pct
         trade_usd = max_trade_usd * signal_strength
 
         # Never exceed available balance
-        trade_usd = min(trade_usd, from_token_value * 0.99)  # leave 1% buffer
+        trade_usd = min(trade_usd, from_token_value * 0.99)
 
         # Enforce minimum
         if trade_usd < settings.min_trade_usd:
@@ -118,7 +120,11 @@ class RiskManager:
             return False, f"Trading halted: {self.state.halt_reason}"
 
         new_position_value = token_current_value + proposed_buy_usd
-        position_pct = new_position_value / portfolio_value if portfolio_value > 0 else 1.0
+        position_pct = (
+            new_position_value / portfolio_value
+            if portfolio_value > 0
+            else 1.0
+        )
 
         if position_pct > settings.max_position_pct:
             return False, (
@@ -152,10 +158,17 @@ class RiskManager:
 
     def to_dict(self) -> dict:
         pnl = self.state.current_value - self.state.daily_start_value
-        pnl_pct = pnl / self.state.daily_start_value if self.state.daily_start_value > 0 else 0
+        pnl_pct = (
+            pnl / self.state.daily_start_value
+            if self.state.daily_start_value > 0
+            else 0
+        )
         drawdown = 0.0
         if self.state.peak_value > 0:
-            drawdown = (self.state.peak_value - self.state.current_value) / self.state.peak_value
+            drawdown = (
+                (self.state.peak_value - self.state.current_value)
+                / self.state.peak_value
+            )
 
         return {
             "halted": self.state.halted,
