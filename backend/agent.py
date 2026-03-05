@@ -58,13 +58,12 @@ def _combine_signals(signals: dict[str, Signal], weights: dict[str, float]) -> S
     """Weighted combination of strategy signals.
 
     Each strategy votes with its action direction (+1 buy, -1 sell, 0 hold)
-    weighted by strategy weight × signal confidence. Returns the winning
+    weighted by strategy_weight * signal_confidence.  Returns the winning
     direction if the weighted score exceeds a minimum threshold, else None.
     """
     if not signals:
         return None
 
-    # Group by token — use the token from whichever signal fires
     tokens: set[str] = {s.token for s in signals.values() if s.token and s.action != "hold"}
     if not tokens:
         return None
@@ -112,7 +111,6 @@ class TradingAgent:
         self._running = False
         self._client: httpx.AsyncClient | None = None
 
-        # Set diversification targets for airdrop optimizer
         self.recall_opt.set_diversification_targets(
             [t["address"] for t in TRACKED_TOKENS]
         )
@@ -278,8 +276,8 @@ class TradingAgent:
             await self.start()
 
     async def _tick(self) -> None:
-        """One iteration: fetch prices, evaluate strategies, maybe trade."""
-        # 1. Fetch prices & feed all three strategies
+        """One iteration: fetch prices, run all 3 strategies, combine signals, maybe trade."""
+        # 1. Fetch prices and feed all three strategies
         for token_info in TRACKED_TOKENS:
             addr = token_info["address"]
             price = await self.fetch_price(addr, token_info["chain"], token_info["specificChain"])
@@ -287,7 +285,7 @@ class TradingAgent:
             self.mean_reversion.feed_price(addr, price)
             self.sentiment.feed_price(addr, price)
 
-        # 2. Refresh portfolio
+        # 2. Refresh portfolio value
         portfolio = await self.fetch_portfolio()
         self.state.portfolio_value = portfolio.get("totalValue", self.state.portfolio_value)
         self.risk.update_portfolio_value(self.state.portfolio_value)
@@ -296,7 +294,7 @@ class TradingAgent:
             (self.state.pnl / self.state.initial_value * 100) if self.state.initial_value else 0.0
         )
 
-        # 3. Evaluate all three strategies per token and combine with weights
+        # 3. Evaluate all three strategies per token and combine with weights (50/30/20)
         best_signal: Signal | None = None
         for token_info in TRACKED_TOKENS:
             addr = token_info["address"]
@@ -310,14 +308,14 @@ class TradingAgent:
                 if best_signal is None or combined.confidence > best_signal.confidence:
                     best_signal = combined
 
-        # 4. Airdrop optimizer fallback (only when no primary signal)
+        # 4. Airdrop optimizer fallback (only when no primary signal fires)
         if best_signal is None:
             portfolio_tokens = [t.get("token", "") for t in portfolio.get("tokens", [])]
             airdrop_signal = self.recall_opt.evaluate(portfolio_tokens)
             if airdrop_signal.action != "hold":
                 best_signal = airdrop_signal
 
-        # 5. Execute trade if we have a signal
+        # 5. Execute trade if we have an actionable signal
         if best_signal and best_signal.action in ("buy", "sell"):
             trade_size = self.risk.optimal_trade_size(
                 self.state.portfolio_value, best_signal.confidence
@@ -357,5 +355,5 @@ class TradingAgent:
         self.state.last_update = datetime.now(timezone.utc).isoformat()
 
 
-# Singleton
+# Singleton used by main.py
 agent = TradingAgent()
