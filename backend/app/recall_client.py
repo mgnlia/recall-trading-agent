@@ -9,7 +9,7 @@ Auth: Bearer token in Authorization header.
 """
 import asyncio
 import structlog
-from typing import Any, Optional
+from typing import Any
 from dataclasses import dataclass
 
 import httpx
@@ -249,16 +249,24 @@ class RecallClient:
 
     async def get_prices_batch(
         self,
-        tokens: list[tuple[str, str, str]],  # (address, chain, specific_chain)
+        tokens: list[tuple[str, str, str]],
     ) -> dict[str, float]:
         """Fetch prices for multiple tokens concurrently."""
-        async def _fetch(addr: str, chain: str, specific: str) -> tuple[str, float]:
+        async def _fetch(
+            addr: str, chain: str, specific: str,
+        ) -> tuple[str, float]:
             try:
                 p = await self.get_price(addr, chain, specific)
                 return addr, p.price
             except Exception as e:
-                logger.warning("recall.price_fetch_error", token=addr, error=str(e))
+                logger.warning(
+                    "recall.price_fetch_error",
+                    token=addr,
+                    error=str(e),
+                )
                 return addr, 0.0
 
-        results = await asyncio.gather(*[_fetch(a, c, s) for a, c, s in tokens])
+        results = await asyncio.gather(
+            *[_fetch(a, c, s) for a, c, s in tokens],
+        )
         return dict(results)
