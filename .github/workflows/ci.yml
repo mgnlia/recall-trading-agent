@@ -22,11 +22,17 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      - name: Install dependencies
-        run: uv pip install --system fastapi uvicorn httpx sse-starlette pydantic pydantic-settings ruff
+      - name: Install runtime dependencies
+        run: uv pip install --system fastapi uvicorn httpx sse-starlette pydantic pydantic-settings
+
+      - name: Install ruff
+        run: uv pip install --system ruff
 
       - name: Lint (ruff)
         run: ruff check .
+
+      - name: Smoke-test imports
+        run: python -c "from config import settings; from risk import RiskManager; print('config OK — recall_base_url:', settings.recall_base_url); print('risk OK — max_position_pct:', settings.max_position_pct); print('ALL IMPORTS PASS')"
 
   frontend:
     runs-on: ubuntu-latest
