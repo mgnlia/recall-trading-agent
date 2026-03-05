@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Recall AI Trading Agent",
     description="AI-powered trading agent with multi-strategy signals and RECALL airdrop farming",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -50,7 +50,7 @@ app.add_middleware(
 async def root():
     return {
         "name": "Recall AI Trading Agent",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "status": agent.state.status,
         "docs": "/docs",
     }
@@ -62,7 +62,7 @@ async def health():
 
 
 # ---------------------------------------------------------------------------
-# Agent state
+# Agent state  (frontend calls /api/status)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/status")
@@ -82,19 +82,19 @@ async def get_status():
     }
 
 
-# Keep legacy /api/stats alias for backwards compat
+# Legacy alias kept for backwards compat
 @app.get("/api/stats")
 async def get_stats():
     return await get_status()
 
 
 # ---------------------------------------------------------------------------
-# Portfolio
+# Portfolio  (frontend calls /api/portfolio)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/portfolio")
 async def get_portfolio():
-    """Live portfolio snapshot from the agent."""
+    """Live portfolio snapshot."""
     portfolio = await agent.fetch_portfolio()
     return {
         **portfolio,
@@ -104,12 +104,12 @@ async def get_portfolio():
 
 
 # ---------------------------------------------------------------------------
-# Trades
+# Trades  (frontend calls /api/trades)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/trades")
 async def get_trades(limit: int = 50):
-    """Recent trade events from the agent event log."""
+    """Recent trade events."""
     trades = [
         e for e in reversed(agent.state.events)
         if e.get("type") == "trade"
@@ -118,12 +118,12 @@ async def get_trades(limit: int = 50):
 
 
 # ---------------------------------------------------------------------------
-# Risk
+# Risk  (frontend calls /api/risk)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/risk")
 async def get_risk():
-    """Risk manager state — drawdown, halt status, position limits."""
+    """Risk manager state."""
     r = agent.risk
     return {
         "halted": r.halted,
@@ -136,7 +136,7 @@ async def get_risk():
 
 
 # ---------------------------------------------------------------------------
-# Airdrop
+# Airdrop  (frontend calls /api/airdrop)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/airdrop")
@@ -154,22 +154,22 @@ async def get_airdrop():
 
 
 # ---------------------------------------------------------------------------
-# Leaderboard
+# Leaderboard  (frontend calls /api/leaderboard)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/leaderboard")
 async def get_leaderboard():
-    """Competition leaderboard (live or simulated)."""
+    """Competition leaderboard."""
     return await agent.fetch_leaderboard()
 
 
 # ---------------------------------------------------------------------------
-# Agent control
+# Agent control  (frontend calls POST /api/agent/start|stop|resume)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/agent/start")
 async def agent_start():
-    """Start the agent loop if not already running."""
+    """Start the agent loop."""
     if agent.state.status == "running":
         return {"ok": False, "message": "Agent already running"}
     asyncio.create_task(agent.start())
@@ -185,13 +185,13 @@ async def agent_stop():
 
 @app.post("/api/agent/resume")
 async def agent_resume():
-    """Resume agent after a risk halt."""
+    """Resume after a risk halt."""
     await agent.resume()
     return {"ok": True, "message": "Agent resumed"}
 
 
 # ---------------------------------------------------------------------------
-# SSE stream
+# SSE stream  (frontend calls /api/stream)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/stream")
@@ -206,7 +206,6 @@ async def stream_events():
                 for event in events[last_index:]:
                     yield {"data": json.dumps(event)}
                 last_index = len(events)
-            # Also emit a heartbeat so the connection stays alive
             else:
                 yield {
                     "data": json.dumps({
