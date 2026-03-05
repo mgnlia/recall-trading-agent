@@ -23,7 +23,7 @@ jobs:
         run: pip install uv
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv pip install --system fastapi uvicorn httpx sse-starlette pydantic pydantic-settings ruff
 
       - name: Lint (ruff)
         run: ruff check .
