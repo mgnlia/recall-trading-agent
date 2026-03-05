@@ -1,8 +1,4 @@
-"""Momentum-based trading strategy.
-
-Tracks recent price changes and generates buy signals when short-term
-momentum exceeds a threshold, sell signals when momentum reverses.
-"""
+"""Momentum-based trading strategy."""
 
 from __future__ import annotations
 
@@ -11,22 +7,16 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Types
-# ---------------------------------------------------------------------------
 
 @dataclass
 class Signal:
     """A trading signal produced by a strategy."""
+
     action: str  # "buy" | "sell" | "hold"
     token: str
-    confidence: float  # 0.0 – 1.0
+    confidence: float  # 0.0 - 1.0
     reason: str
 
-
-# ---------------------------------------------------------------------------
-# Strategy
-# ---------------------------------------------------------------------------
 
 @dataclass
 class MomentumStrategy:
@@ -38,14 +28,13 @@ class MomentumStrategy:
 
     window_short: int = 5
     window_long: int = 20
-    threshold: float = 0.02  # 2 % move
+    threshold: float = 0.02
     _prices: dict[str, list[float]] = field(default_factory=dict)
 
     def feed_price(self, token: str, price: float) -> None:
         """Append a new price observation."""
         self._prices.setdefault(token, [])
         self._prices[token].append(price)
-        # keep at most window_long * 2 entries
         max_len = self.window_long * 2
         if len(self._prices[token]) > max_len:
             self._prices[token] = self._prices[token][-max_len:]

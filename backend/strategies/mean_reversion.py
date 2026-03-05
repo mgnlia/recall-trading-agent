@@ -1,8 +1,4 @@
-"""Mean-reversion trading strategy.
-
-Buys when price dips below a rolling mean by more than *z_threshold*
-standard deviations, sells when it rises above.
-"""
+"""Mean-reversion trading strategy."""
 
 from __future__ import annotations
 

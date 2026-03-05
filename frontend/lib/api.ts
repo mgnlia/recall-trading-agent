@@ -24,6 +24,12 @@ export async function fetchRisk() {
   return res.json()
 }
 
+export async function fetchAirdrop() {
+  const res = await fetch(`${API_URL}/api/airdrop`)
+  if (!res.ok) throw new Error('Failed to fetch airdrop')
+  return res.json()
+}
+
 export async function fetchLeaderboard() {
   const res = await fetch(`${API_URL}/api/leaderboard`)
   if (!res.ok) throw new Error('Failed to fetch leaderboard')
@@ -32,16 +38,19 @@ export async function fetchLeaderboard() {
 
 export async function agentStart() {
   const res = await fetch(`${API_URL}/api/agent/start`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to start agent')
   return res.json()
 }
 
 export async function agentStop() {
   const res = await fetch(`${API_URL}/api/agent/stop`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to stop agent')
   return res.json()
 }
 
 export async function agentResume() {
   const res = await fetch(`${API_URL}/api/agent/resume`, { method: 'POST' })
+  if (!res.ok) throw new Error('Failed to resume agent')
   return res.json()
 }
 

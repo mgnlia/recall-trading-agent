@@ -3,16 +3,13 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install uv
-RUN pip install uv
+RUN pip install --no-cache-dir uv
 
-# Copy dependency files
-COPY pyproject.toml ./
-
-# Install dependencies
-RUN uv pip install --system -e "."
-
-# Copy source
+# Copy ALL source (must come before install so uv can resolve the local package)
 COPY . .
+
+# Install dependencies from pyproject.toml (non-editable, no source binding needed)
+RUN uv pip install --system --no-cache .
 
 EXPOSE 8000
 

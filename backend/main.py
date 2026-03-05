@@ -1,33 +1,37 @@
-"""FastAPI application — dashboard API + SSE stream."""
-
-from __future__ import annotations
+"""
+Recall AI Trading Agent — FastAPI Backend
+"""
 
 import asyncio
 import json
-import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from agent import agent
-from config import settings
-
-logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-    """Start agent on boot, stop on shutdown."""
+async def lifespan(app: FastAPI):
+    # Start background agent loop
     task = asyncio.create_task(agent.start())
     yield
     await agent.stop()
     task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
-app = FastAPI(title="Recall Trading Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Recall AI Trading Agent",
+    description="AI-powered trading agent with multi-strategy signals and RECALL airdrop farming",
+    version="0.2.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,94 +43,181 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# REST endpoints
+# Root + health
 # ---------------------------------------------------------------------------
 
-
-@app.get("/api/stats")
-async def get_stats():
-    """Current agent stats."""
-    s = agent.state
+@app.get("/")
+async def root():
     return {
-        "status": s.status,
-        "portfolioValue": s.portfolio_value,
-        "pnl": s.pnl,
-        "pnlPct": s.pnl_pct,
-        "initialValue": s.initial_value,
-        "totalTrades": s.total_trades,
-        "airdropScore": s.airdrop_score,
-        "lastUpdate": s.last_update,
-        "simulationMode": settings.simulation_mode,
-        "riskHalted": agent.risk.halted,
-        "drawdown": agent.risk.current_drawdown,
+        "name": "Recall AI Trading Agent",
+        "version": "0.2.0",
+        "status": agent.state.status,
+        "docs": "/docs",
     }
-
-
-@app.get("/api/trades")
-async def get_trades():
-    """Trade history."""
-    return {"trades": agent.risk.trade_history[-100:]}
-
-
-@app.get("/api/airdrop")
-async def get_airdrop():
-    """Airdrop farming metrics."""
-    m = agent.recall_opt.metrics
-    return {
-        "estimatedScore": m.estimated_airdrop_score,
-        "activityScore": m.activity_score,
-        "totalTrades": m.total_trades,
-        "tradesToday": m.trades_today,
-        "uniqueTokens": len(m.unique_tokens_traded),
-        "chainsUsed": list(m.chains_used),
-    }
-
-
-@app.get("/api/events")
-async def get_events():
-    """Recent event log."""
-    return {"events": agent.state.events[-50:]}
-
-
-@app.get("/api/stream")
-async def stream_events():
-    """SSE endpoint for live dashboard updates."""
-
-    async def event_generator() -> AsyncGenerator[dict[str, str], None]:
-        last_idx = len(agent.state.events)
-        while True:
-            await asyncio.sleep(2)
-            current = agent.state.events
-            if len(current) > last_idx:
-                for ev in current[last_idx:]:
-                    yield {"event": ev.get("type", "tick"), "data": json.dumps(ev)}
-                last_idx = len(current)
-            # Always send heartbeat with stats
-            s = agent.state
-            yield {
-                "event": "stats",
-                "data": json.dumps({
-                    "portfolioValue": s.portfolio_value,
-                    "pnl": s.pnl,
-                    "pnlPct": s.pnl_pct,
-                    "airdropScore": s.airdrop_score,
-                    "totalTrades": s.total_trades,
-                    "status": s.status,
-                }),
-            }
-
-    return EventSourceResponse(event_generator())
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "agent": agent.state.status}
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# Entrypoint
+# Agent state
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host=settings.host, port=settings.port, reload=True)
+@app.get("/api/status")
+async def get_status():
+    """Full agent state — used by dashboard status card."""
+    s = agent.state
+    return {
+        "status": s.status,
+        "portfolio_value": s.portfolio_value,
+        "pnl": s.pnl,
+        "pnl_pct": s.pnl_pct,
+        "initial_value": s.initial_value,
+        "airdrop_score": s.airdrop_score,
+        "total_trades": s.total_trades,
+        "last_update": s.last_update,
+        "simulation_mode": True,
+    }
+
+
+# Keep legacy /api/stats alias for backwards compat
+@app.get("/api/stats")
+async def get_stats():
+    return await get_status()
+
+
+# ---------------------------------------------------------------------------
+# Portfolio
+# ---------------------------------------------------------------------------
+
+@app.get("/api/portfolio")
+async def get_portfolio():
+    """Live portfolio snapshot from the agent."""
+    portfolio = await agent.fetch_portfolio()
+    return {
+        **portfolio,
+        "pnl": agent.state.pnl,
+        "pnl_pct": agent.state.pnl_pct,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trades
+# ---------------------------------------------------------------------------
+
+@app.get("/api/trades")
+async def get_trades(limit: int = 50):
+    """Recent trade events from the agent event log."""
+    trades = [
+        e for e in reversed(agent.state.events)
+        if e.get("type") == "trade"
+    ][:limit]
+    return {"trades": trades, "total": len(trades)}
+
+
+# ---------------------------------------------------------------------------
+# Risk
+# ---------------------------------------------------------------------------
+
+@app.get("/api/risk")
+async def get_risk():
+    """Risk manager state — drawdown, halt status, position limits."""
+    r = agent.risk
+    return {
+        "halted": r.halted,
+        "current_drawdown": round(r.current_drawdown * 100, 2),
+        "peak_portfolio_value": r.peak_portfolio_value,
+        "max_drawdown_pct": 15.0,
+        "max_position_pct": 25.0,
+        "total_trades_recorded": len(r.trade_history),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Airdrop
+# ---------------------------------------------------------------------------
+
+@app.get("/api/airdrop")
+async def get_airdrop():
+    """RECALL airdrop farming progress."""
+    m = agent.recall_opt.metrics
+    return {
+        "estimated_score": round(m.estimated_airdrop_score, 2),
+        "activity_score": round(m.activity_score, 4),
+        "total_trades": m.total_trades,
+        "trades_today": m.trades_today,
+        "unique_tokens_traded": len(m.unique_tokens_traded),
+        "chains_used": list(m.chains_used),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Leaderboard
+# ---------------------------------------------------------------------------
+
+@app.get("/api/leaderboard")
+async def get_leaderboard():
+    """Competition leaderboard (live or simulated)."""
+    return await agent.fetch_leaderboard()
+
+
+# ---------------------------------------------------------------------------
+# Agent control
+# ---------------------------------------------------------------------------
+
+@app.post("/api/agent/start")
+async def agent_start():
+    """Start the agent loop if not already running."""
+    if agent.state.status == "running":
+        return {"ok": False, "message": "Agent already running"}
+    asyncio.create_task(agent.start())
+    return {"ok": True, "message": "Agent starting"}
+
+
+@app.post("/api/agent/stop")
+async def agent_stop():
+    """Stop the agent loop."""
+    await agent.stop()
+    return {"ok": True, "message": "Agent stopped"}
+
+
+@app.post("/api/agent/resume")
+async def agent_resume():
+    """Resume agent after a risk halt."""
+    await agent.resume()
+    return {"ok": True, "message": "Agent resumed"}
+
+
+# ---------------------------------------------------------------------------
+# SSE stream
+# ---------------------------------------------------------------------------
+
+@app.get("/api/stream")
+async def stream_events():
+    """SSE endpoint — streams agent events in real time."""
+
+    async def event_generator():
+        last_index = max(0, len(agent.state.events) - 1)
+        while True:
+            events = agent.state.events
+            if len(events) > last_index:
+                for event in events[last_index:]:
+                    yield {"data": json.dumps(event)}
+                last_index = len(events)
+            # Also emit a heartbeat so the connection stays alive
+            else:
+                yield {
+                    "data": json.dumps({
+                        "type": "heartbeat",
+                        "data": {
+                            "status": agent.state.status,
+                            "portfolio_value": agent.state.portfolio_value,
+                            "airdrop_score": agent.state.airdrop_score,
+                        },
+                    })
+                }
+            await asyncio.sleep(3)
+
+    return EventSourceResponse(event_generator())

@@ -21,8 +21,16 @@ from risk import RiskManager
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.momentum import MomentumStrategy, Signal
 from strategies.recall_optimizer import RecallOptimizer
+from strategies.sentiment import SentimentStrategy
 
 logger = logging.getLogger(__name__)
+
+# Strategy weights — must sum to 1.0
+STRATEGY_WEIGHTS = {
+    "momentum": 0.50,
+    "mean_reversion": 0.30,
+    "sentiment": 0.20,
+}
 
 # Well-known tokens to track
 TRACKED_TOKENS = [
@@ -46,12 +54,58 @@ class AgentState:
     events: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _combine_signals(signals: dict[str, Signal], weights: dict[str, float]) -> Signal | None:
+    """Weighted combination of strategy signals.
+
+    Each strategy votes with its action direction (+1 buy, -1 sell, 0 hold)
+    weighted by strategy weight × signal confidence. Returns the winning
+    direction if the weighted score exceeds a minimum threshold, else None.
+    """
+    if not signals:
+        return None
+
+    # Group by token — use the token from whichever signal fires
+    tokens: set[str] = {s.token for s in signals.values() if s.token and s.action != "hold"}
+    if not tokens:
+        return None
+
+    best_combined: Signal | None = None
+    best_score = 0.0
+
+    for token in tokens:
+        weighted_score = 0.0
+        reasons: list[str] = []
+
+        for name, signal in signals.items():
+            if signal.token != token:
+                continue
+            w = weights.get(name, 0.0)
+            direction = {"buy": 1.0, "sell": -1.0, "hold": 0.0}.get(signal.action, 0.0)
+            contribution = w * signal.confidence * direction
+            weighted_score += contribution
+            if signal.action != "hold":
+                reasons.append(f"{name}({signal.action},{signal.confidence:.2f})")
+
+        abs_score = abs(weighted_score)
+        if abs_score > best_score:
+            best_score = abs_score
+            action = "buy" if weighted_score > 0 else "sell"
+            reason = f"Weighted [{', '.join(reasons)}] → score={weighted_score:+.3f}"
+            best_combined = Signal(action, token, min(abs_score, 1.0), reason)
+
+    # Require a minimum combined score to act (avoids noise trades)
+    if best_combined is None or best_score < 0.05:
+        return None
+    return best_combined
+
+
 class TradingAgent:
     """Core agent that runs the trading loop."""
 
     def __init__(self) -> None:
         self.momentum = MomentumStrategy()
         self.mean_reversion = MeanReversionStrategy()
+        self.sentiment = SentimentStrategy()
         self.recall_opt = RecallOptimizer()
         self.risk = RiskManager()
         self.state = AgentState()
@@ -91,7 +145,9 @@ class TradingAgent:
         if settings.simulation_mode:
             return self._sim_price(token)
         client = await self._get_client()
-        resp = await client.get("/price", params={"token": token, "chain": chain, "specificChain": specific})
+        resp = await client.get(
+            "/price", params={"token": token, "chain": chain, "specificChain": specific}
+        )
         resp.raise_for_status()
         return float(resp.json().get("price", 0))
 
@@ -144,7 +200,6 @@ class TradingAgent:
         )
         if token not in self._sim_prices:
             self._sim_prices[token] = base
-        # Random walk
         change = random.gauss(0, 0.005)
         self._sim_prices[token] *= 1 + change
         return self._sim_prices[token]
@@ -153,7 +208,7 @@ class TradingAgent:
         return {
             "success": True,
             "transaction": {
-                "id": f"sim_{int(time.time())}_{random.randint(1000,9999)}",
+                "id": f"sim_{int(time.time())}_{random.randint(1000, 9999)}",
                 "fromToken": from_t,
                 "toToken": to_t,
                 "fromAmount": amount,
@@ -189,9 +244,11 @@ class TradingAgent:
         """Start the agent trading loop."""
         self._running = True
         self.state.status = "running"
-        self._emit("agent", "Agent started" + (" (SIMULATION)" if settings.simulation_mode else ""))
+        self._emit(
+            "agent",
+            "Agent started" + (" (SIMULATION)" if settings.simulation_mode else ""),
+        )
 
-        # Initial portfolio snapshot
         portfolio = await self.fetch_portfolio()
         self.state.portfolio_value = portfolio.get("totalValue", 10000.0)
         self.state.initial_value = self.state.portfolio_value
@@ -212,14 +269,23 @@ class TradingAgent:
         if self._client and not self._client.is_closed:
             await self._client.aclose()
 
+    async def resume(self) -> None:
+        """Resume after a risk halt."""
+        self.risk.reset()
+        self.state.status = "running"
+        self._emit("agent", "Agent resumed after risk halt")
+        if not self._running:
+            await self.start()
+
     async def _tick(self) -> None:
         """One iteration: fetch prices, evaluate strategies, maybe trade."""
-        # 1. Fetch prices & feed strategies
+        # 1. Fetch prices & feed all three strategies
         for token_info in TRACKED_TOKENS:
             addr = token_info["address"]
             price = await self.fetch_price(addr, token_info["chain"], token_info["specificChain"])
             self.momentum.feed_price(addr, price)
             self.mean_reversion.feed_price(addr, price)
+            self.sentiment.feed_price(addr, price)
 
         # 2. Refresh portfolio
         portfolio = await self.fetch_portfolio()
@@ -230,18 +296,22 @@ class TradingAgent:
             (self.state.pnl / self.state.initial_value * 100) if self.state.initial_value else 0.0
         )
 
-        # 3. Evaluate strategies
+        # 3. Evaluate all three strategies per token and combine with weights
         best_signal: Signal | None = None
         for token_info in TRACKED_TOKENS:
             addr = token_info["address"]
-            for strategy in [self.momentum, self.mean_reversion]:
-                signal = strategy.evaluate(addr)
-                if signal.action != "hold":
-                    if best_signal is None or signal.confidence > best_signal.confidence:
-                        best_signal = signal
+            per_strategy: dict[str, Signal] = {
+                "momentum": self.momentum.evaluate(addr),
+                "mean_reversion": self.mean_reversion.evaluate(addr),
+                "sentiment": self.sentiment.evaluate(addr),
+            }
+            combined = _combine_signals(per_strategy, STRATEGY_WEIGHTS)
+            if combined and combined.action != "hold":
+                if best_signal is None or combined.confidence > best_signal.confidence:
+                    best_signal = combined
 
-        # 4. Airdrop optimizer fallback
-        if best_signal is None or best_signal.action == "hold":
+        # 4. Airdrop optimizer fallback (only when no primary signal)
+        if best_signal is None:
             portfolio_tokens = [t.get("token", "") for t in portfolio.get("tokens", [])]
             airdrop_signal = self.recall_opt.evaluate(portfolio_tokens)
             if airdrop_signal.action != "hold":
